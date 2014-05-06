@@ -30,6 +30,8 @@
 #include "config.h"
 
 #include <glib.h>
+#include <epan/expert.h>
+#include <epan/proto.h>
 #include <epan/packet.h>
 #include <epan/wmem/wmem.h>
 #include <epan/etypes.h>
@@ -1607,7 +1609,7 @@ dissect_ieee_802_1_tlv(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, 
 	case 0x0B: /*DCBX Priority-based Flow Control Configuration TLV*/
 	{
 	    if (tree)
-{
+        {
 		    guint8 pfc;
 			
 			proto_item *pfc_item = NULL;
@@ -2679,6 +2681,7 @@ static gint32
 dissect_organizational_specific_tlv(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, guint32 offset)
 {
 	guint16 tempLen;
+    guint16 validLen;
 	guint16 tempShort;
 	gint    tempTree;
 	guint32 oui, tLength = tvb_length(tvb);
@@ -2697,7 +2700,7 @@ dissect_organizational_specific_tlv(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 	oui = tvb_get_ntoh24(tvb, (offset+2));
 	subType = tvb_get_guint8(tvb, (offset+5));
 
-	/* check for registered dissectors for the OUI  If none found continue, else call dissector */
+    /* check for registered dissectors for the OUI.  If none found continue, else call dissector */
 	if( dissector_try_uint(oui_unique_code_table, oui, tvb, pinfo, tree) ) {
 		return tLength;
 	}
@@ -2708,6 +2711,7 @@ dissect_organizational_specific_tlv(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 		if(ouiStr==NULL) ouiStr="Unknown";
 	}
 
+    validLen = tempLen;
 	/* Set a default value */
 	tempTree = ett_org_spc_ProfinetSubTypes_1;
 	switch(oui)
@@ -2727,12 +2731,18 @@ dissect_organizational_specific_tlv(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 			break;
 		//dcbx here
 		case 9:	tempTree = ett_org_spc_ieee_802_1_9;
+            /* Set a valid length */
+            validLen = 25;
 		    break;
 		case 10:	tempTree = ett_org_spc_ieee_802_1_10;
+            validLen = 25;
 		    break;
 		case 11:	tempTree = ett_org_spc_ieee_802_1_11;
+            validLen = 6;
 		    break;
 		case 12:	tempTree = ett_org_spc_ieee_802_1_12;
+            if (tempLen % 3 != 2)
+                validLen -= (tempLen % 3) + 1;
 		    break;
 		}
 		break;
@@ -2808,24 +2818,37 @@ dissect_organizational_specific_tlv(tvbuff_t *tvb, packet_info *pinfo, proto_tre
 	}
 	if (tree)
 	{
-		tf = proto_tree_add_text(tree, tvb, offset, tLength, "%s - %s", ouiStr, subTypeStr);
+        tf = proto_tree_add_text(tree, tvb, offset, tLength, "%s - %s", ouiStr, subTypeStr);
 		org_tlv_tree = proto_item_add_subtree(tf, tempTree); /* change to temp: ett_org_spc_tlv */
-		proto_tree_add_item(org_tlv_tree, hf_lldp_tlv_type, tvb, offset, 2, ENC_BIG_ENDIAN);
+        proto_tree_add_item(org_tlv_tree, hf_lldp_tlv_type, tvb, offset, 2, ENC_BIG_ENDIAN);
 	}
 	if (tempLen < 4)
 	{
 		if (tree)
 			proto_tree_add_uint_format_value(org_tlv_tree, hf_lldp_tlv_len, tvb, offset, 2,
-			    tempShort, "%u (too short, must be >= 4)", tempLen);
+                tempShort, "%u (too short, must be >= 4)", tempLen);
 		return tLength;
 	}
 	if (tree)
 	{
-		proto_tree_add_item(org_tlv_tree, hf_lldp_tlv_len, tvb, offset, 2, ENC_BIG_ENDIAN);
+        tf = proto_tree_add_item(org_tlv_tree, hf_lldp_tlv_len, tvb, offset, 2, ENC_BIG_ENDIAN);
 
 		/* Display organizational unique id */
-		proto_tree_add_uint(org_tlv_tree, hf_org_spc_oui, tvb, (offset + 2), 3, oui);
+        proto_tree_add_uint(org_tlv_tree, hf_org_spc_oui, tvb, (offset + 2), 3, oui);
 	}
+    /* Check for TLV length */
+    if (tempLen != validLen)
+    {
+        if (tree)
+        {
+            /* Display subtype */
+            proto_tree_add_item(org_tlv_tree, hf_ieee_802_1_subtype, tvb, offset + 5, 1, ENC_BIG_ENDIAN);
+
+            /* Display Expert Info */
+            expert_add_info_format_internal(pinfo, tf, PI_PROTOCOL, PI_ERROR, "Invalid length for this TLV subtype. Valid = %u", validLen);
+            return tLength;
+        }
+    }
 
 	switch (oui)
 	{
@@ -2910,7 +2933,7 @@ dissect_lldp(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree)
 
 	/* Get chassis id tlv */
 	rtnValue = dissect_lldp_chassis_id(tvb, pinfo, lldp_tree, offset);
-	if (rtnValue < 0)
+    if (rtnValue < 0)
 	{
 		col_set_str(pinfo->cinfo, COL_INFO, "Invalid Chassis ID TLV");
 
@@ -3003,7 +3026,7 @@ proto_register_lldp(void)
 {
 	/* Setup list of header fields */
 	static hf_register_info hf[] = {
-		{ &hf_lldp_tlv_type,
+        { &hf_lldp_tlv_type,
 			{ "TLV Type", "lldp.tlv.type", FT_UINT16, BASE_DEC,
 			VALS(tlv_types), TLV_TYPE_MASK, NULL, HFILL }
 		},
@@ -3143,7 +3166,7 @@ proto_register_lldp(void)
 			{ "Object Identifier", "lldp.mgn.obj.id", FT_OID, BASE_NONE,
 			NULL, 0, NULL, HFILL }
 		},
-		{ &hf_org_spc_oui,
+        { &hf_org_spc_oui,
 			{ "Organization Unique Code", "lldp.orgtlv.oui", FT_UINT24, BASE_HEX,
 			VALS(tlv_oui_subtype_vals), 0x0, NULL, HFILL }
 		},
@@ -3744,7 +3767,7 @@ proto_register_lldp(void)
 		&ett_system_cap_enabled,
 		&ett_management_address,
 		&ett_unknown_tlv,
-		&ett_org_spc_tlv,
+        &ett_org_spc_tlv,
 		&ett_org_spc_def,
 		&ett_org_spc_ieee_802_1_1,
 		&ett_org_spc_ieee_802_1_2,
@@ -3793,7 +3816,7 @@ proto_register_lldp(void)
 	};
 
 	/* Register the protocol name and description */
-	proto_lldp = proto_register_protocol("Link Layer Discovery Protocol", "LLDP", "lldp");
+    proto_lldp = proto_register_protocol("Link Layer Discovery Protocol", "LLDP", "lldp");
 
 	/* Required function calls to register the header fields and subtrees used */
 	proto_register_field_array(proto_lldp, hf, array_length(hf));
@@ -3809,3 +3832,4 @@ proto_reg_handoff_lldp(void)
 	lldp_handle = create_dissector_handle(dissect_lldp,proto_lldp);
 	dissector_add_uint("ethertype", ETHERTYPE_LLDP, lldp_handle);
 }
+
