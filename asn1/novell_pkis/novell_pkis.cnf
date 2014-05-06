@@ -1,0 +1,22 @@
+# novell_pkis.cnf
+
+# $Id: novell_pkis.cnf 54511 2013-12-31 14:50:52Z pascal $
+
+#.MODULE_IMPORT
+
+#.EXPORTS
+
+#.REGISTER
+SecurityAttributes B "2.16.840.1.113719.1.9.4.1" "pa-sa"
+RelianceLimits     B "2.16.840.1.113719.1.9.4.2" "pa-rl"
+
+#.PDU
+# PKIS-MESSAGE
+
+#.NO_EMIT
+
+#.TYPE_RENAME
+
+#.FIELD_RENAME
+
+#.END
